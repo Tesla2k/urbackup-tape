@@ -18,6 +18,7 @@ Only tested on Ubuntu 18.04
 
 
 Todos: 
+- Missing check an waiting for inserted tape
 - If tape backup fails urbackup should fail too
 - Checking the tape finished is only done be the amount of files written to it. So if one host is written multiple times, a other host will be missing. 
 
