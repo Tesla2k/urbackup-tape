@@ -1,9 +1,7 @@
 #!/bin/bash
 
 BACKUPHOSTS="<enter hosts here>"
-
 TAPEDEVICE=/dev/nst0
-
 
 waitForTape() {
  while fuser -s $TAPEDEVICE; do
@@ -11,7 +9,6 @@ waitForTape() {
     sleep 5
   done
 }
-
 
 doTapeBackup() {
   echo "Doing tape backup $1 $2"
@@ -30,8 +27,6 @@ checkTapeFinished() {
 }
 
 HOSTCOUNT=0
-
-
 for host in $BACKUPHOSTS
 do
   if echo "$1" | grep -q "$host"; then
@@ -41,4 +36,3 @@ do
 done
 
 checkTapeFinished
-
