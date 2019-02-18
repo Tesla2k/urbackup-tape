@@ -1,0 +1,44 @@
+#!/bin/bash
+
+BACKUPHOSTS="<enter hosts here>"
+
+TAPEDEVICE=/dev/nst0
+
+
+waitForTape() {
+ while fuser -s $TAPEDEVICE; do
+    echo "Used"
+    sleep 5
+  done
+}
+
+
+doTapeBackup() {
+  echo "Doing tape backup $1 $2"
+  waitForTape
+  cd /
+  tar -cf - ${2:1} -V=$1 | buffer -o $TAPEDEVICE
+}
+
+checkTapeFinished() {
+  BACKUPS=`mt-gnu -f $TAPEDEVICE status |grep "file number" | awk -F '=' '{print $2}'`
+  if [ "$HOSTCOUNT" -eq "$BACKUPS" ]
+  then    
+    echo "Tape done ejecting"
+    mt -f $TAPEDEVICE eject
+  fi
+}
+
+HOSTCOUNT=0
+
+
+for host in $BACKUPHOSTS
+do
+  if echo "$1" | grep -q "$host"; then
+    doTapeBackup $host $1
+  fi
+  ((HOSTCOUNT++))
+done
+
+checkTapeFinished
+
