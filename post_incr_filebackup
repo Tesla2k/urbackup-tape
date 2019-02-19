@@ -3,9 +3,13 @@
 BACKUPHOSTS="<enter hosts here>"
 TAPEDEVICE=/dev/nst0
 
+afterFinishedHook() {
+  #Called before tape is ejected
+}
+
 waitForTape() {
  while fuser -s $TAPEDEVICE; do
-    echo "Used"
+    echo "Tape in use waiting..."
     sleep 5
   done
 }
@@ -21,7 +25,9 @@ checkTapeFinished() {
   BACKUPS=`mt-gnu -f $TAPEDEVICE status |grep "file number" | awk -F '=' '{print $2}'`
   if [ "$HOSTCOUNT" -eq "$BACKUPS" ]
   then    
-    echo "Tape done ejecting"
+    echo "Tape done"
+    afterFinisehdHook
+    echo "Ejecting tape"
     mt -f $TAPEDEVICE eject
   fi
 }
@@ -36,3 +42,6 @@ do
 done
 
 checkTapeFinished
+
+echo "Tape backup done"
+
