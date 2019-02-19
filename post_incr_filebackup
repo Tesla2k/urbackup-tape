@@ -10,9 +10,15 @@ afterFinishedHook() {
 }
 
 waitForTape() {
- while fuser -s $TAPEDEVICE; do
+  #Check if tape is in use
+  while fuser -s $TAPEDEVICE; do
     echo "Tape in use waiting..."
-    sleep 5
+    sleep 30
+  done
+  #Check if tape is inserted
+  while mt-st -f $TAPEDEVICE status | grep -q DR_OPEN; do
+    echo "Waiting inserted tape..."
+    sleep 30
   done
 }
 
