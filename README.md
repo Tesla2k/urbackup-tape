@@ -5,7 +5,7 @@ Writes all data from specified hosts to tape.
 Usage:
 
   1. Requires: mt-gnu, mt-st, tar, buffer, fuser
-  2. urbackup user must be able to write to the tape device. (This was a bit tricky, it only worked, when a made tape the main group of userbackup)
+  2. urbackup user must be able to write to the tape device. (This was a bit tricky, it only worked, when a made tape the main group of user urbackup)
   3. Set Parameters in the script. BACKUPHOSTS is a list of all hosts, that should be written to tape
     
     BACKUPHOSTS="host1 host2"
