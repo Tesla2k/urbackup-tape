@@ -1,13 +1,32 @@
 #!/bin/bash
 
-set -e
-
 BACKUPHOSTS="<enter hosts here>"
 TAPEDEVICE=/dev/nst0
 
 afterFinishedHook() {
   #Called before tape is ejected
 }
+
+
+function errexit() {
+  local err=$?
+  set +o xtrace
+  local code="${1:-1}"
+  echo "Error in ${BASH_SOURCE[1]}:${BASH_LINENO[0]}. '${BASH_COMMAND}' exited with status $err"
+  # Print out the stack trace described by $function_stack
+  if [ ${#FUNCNAME[@]} -gt 2 ]
+  then
+    echo "Call tree:"
+    for ((i=1;i<${#FUNCNAME[@]}-1;i++))
+    do
+      echo " $i: ${BASH_SOURCE[$i+1]}:${BASH_LINENO[$i]} ${FUNCNAME[$i]}(...)"
+    done
+  fi
+  echo "Exiting with status ${code}"
+  exit "${code}"
+}
+
+trap 'errexit' ERR
 
 waitForTape() {
   #Check if tape is in use
@@ -32,11 +51,11 @@ doTapeBackup() {
 checkTapeFinished() {
   BACKUPS=`mt-gnu -f $TAPEDEVICE status |grep "file number" | awk -F '=' '{print $2}'`
   if [ "$HOSTCOUNT" -eq "$BACKUPS" ]
-  then    
+  then
     echo "Tape done"
     afterFinisehdHook
     echo "Ejecting tape"
-    mt -f $TAPEDEVICE eject
+    #mt -f $TAPEDEVICE eject
   fi
 }
 
@@ -46,10 +65,10 @@ do
   if echo "$1" | grep -q "$host"; then
     doTapeBackup $host $1
   fi
-  ((HOSTCOUNT++))
+  HOSTCOUNT=$((HOSTCOUNT+1))
+
 done
 
 checkTapeFinished
 
 echo "Tape backup done"
-
