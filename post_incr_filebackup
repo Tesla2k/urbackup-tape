@@ -53,7 +53,7 @@ checkTapeFinished() {
   if [ "$HOSTCOUNT" -eq "$BACKUPS" ]
   then
     echo "Tape done"
-    afterFinisehdHook
+    afterFinishedHook
     echo "Ejecting tape"
     #mt -f $TAPEDEVICE eject
   fi
