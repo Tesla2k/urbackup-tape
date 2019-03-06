@@ -1,74 +1,282 @@
-#!/bin/bash
+#!/usr/bin/php
 
-BACKUPHOSTS="<enter hosts here>"
-TAPEDEVICE=/dev/nst0
+<?php
 
-afterFinishedHook() {
-  #Called before tape is ejected
+$config['tapedevice']="/dev/nst0";
+$config['server']="localhost";
+$config['username'] = "tape_backup";
+$config['password'] = "<password>";
+$config['db'] = "tape_backup";
+
+//Optional:
+$config['additionalDirs'][<label>]=<dir>;
+
+function logMsg($msg)
+{
+  echo $msg;
+  echo "\n";
 }
 
-
-function errexit() {
-  local err=$?
-  set +o xtrace
-  local code="${1:-1}"
-  echo "Error in ${BASH_SOURCE[1]}:${BASH_LINENO[0]}. '${BASH_COMMAND}' exited with status $err"
-  # Print out the stack trace described by $function_stack
-  if [ ${#FUNCNAME[@]} -gt 2 ]
-  then
-    echo "Call tree:"
-    for ((i=1;i<${#FUNCNAME[@]}-1;i++))
-    do
-      echo " $i: ${BASH_SOURCE[$i+1]}:${BASH_LINENO[$i]} ${FUNCNAME[$i]}(...)"
-    done
-  fi
-  echo "Exiting with status ${code}"
-  exit "${code}"
+function my_shell_exec($cmd, &$stdout=null, &$stderr=null) 
+{
+      $proc = proc_open($cmd,[
+          1 => ['pipe','w'],
+          2 => ['pipe','w'],
+      ],$pipes);
+      $stdout = stream_get_contents($pipes[1]);
+      fclose($pipes[1]);
+      $stderr = stream_get_contents($pipes[2]);
+      fclose($pipes[2]);
+      return proc_close($proc);
 }
 
-trap 'errexit' ERR
-
-waitForTape() {
-  #Check if tape is in use
-  while fuser -s $TAPEDEVICE; do
-    echo "Tape in use waiting..."
-    sleep 30
-  done
-  #Check if tape is inserted
-  while mt-st -f $TAPEDEVICE status | grep -q DR_OPEN; do
-    echo "Waiting inserted tape..."
-    sleep 30
-  done
+class TapeBackup
+{
+  public $config;
+  public $db;
+  public $tape;
+  public $hosts;
+  public $current_host;
+  
+  
+  private $semaphore;
+  
+  function __construct() {
+    global $config;
+    $this->config=$config;
+       
+    try {
+    $this->db = new PDO("mysql:host={$config['server']};dbname={$config['db']}", $config['username'], $config['password']);
+    // set the PDO error mode to exception
+    $this->db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);    
+    }
+    catch(PDOException $e)
+    {
+      logMsg("Connection failed: " . $e->getMessage());
+      exit(1);
+    }
+    
+    $sql = "SELECT * FROM hosts";
+    $res= $this->db->query($sql);
+    while ($row=$res->fetch())
+    {
+      $this->hosts[]=$row['host'];
+    }
+          
+  }
+  
+  function tar($path,$label)
+  {
+    $tmpfile='/var/urbackup/tarfiles';
+      
+    logMsg("Taring $path with label $label");
+    if (!is_numeric($this->tape['id'])) 
+    {
+       throw new Exception('Keine Tape Id.'); 
+    }
+    
+    unlink($tmpfile);
+    
+    $path=ltrim($path,'/');                                                                           
+    $cmd="bash -c 'tar -C / -cvf - $path -V=$label 2>$tmpfile | buffer -o {$this->config['tapedevice']}; exit \$((PIPESTATUS[0]+PIPESTATUS[1]))' ";
+      
+    $res=my_shell_exec($cmd,$stdout,$stderr);           
+    if ($res!=0)
+    {
+      throw new Exception("Error $res Taring $cmd\n$stderr\n");    
+    }
+    
+    $stderr=file_get_contents($tmpfile); 
+    
+    $files=explode(PHP_EOL,$stderr);
+      
+    $sql = "INSERT INTO tars (label, tape_id)
+    VALUES ('$label',{$this->tape['id']})";
+    $this->db->exec($sql);    
+    $tar_id = $this->db->lastInsertId();
+      
+    foreach($files as $file)
+    {   
+      $sql = "INSERT INTO files (tar_id, file,changed,backuped)
+      VALUES ($tar_id, '{$file}', now(),now())";  
+      $this->db->exec($sql);
+    }  
+  }
+  
+  function getTape($serial)
+  {
+    $sql="SELECT * FROM tapes WHERE SerialNumber = '$serial'";
+    $res= $this->db->query($sql);
+    if ($row=$res->fetch())
+    {
+      $this->tape=$row;
+    }
+    else
+    {
+      $sql="INSERT INTO tapes (SerialNumber,descr) Value ('$serial','')";
+      $this->db->exec($sql);
+      $sql="SELECT * FROM tapes WHERE SerialNumber = '$serial'";
+      $res= $this->db->query($sql);
+      $row=$res->fetch();
+      $this->tape=$row;      
+    }    
+  }
+  
+  function readTapeInfo()
+  {                
+    my_shell_exec("sudo tapeinfo -f {$this->config['tapedevice']}",$stdout,$stderr);
+    $lines=explode(PHP_EOL,$stdout);
+    foreach ($lines as $line)
+    {
+      $v=explode(':',$line);
+      if ($v[0]=='SerialNumber')
+      {
+        $serial=trim(str_replace("'","",$v[1]));
+      }      
+    }
+    $this->getTape($serial);
+        
+    my_shell_exec("mt-gnu -f {$this->config['tapedevice']} status",$stdout,$stderr);
+    $lines=explode(PHP_EOL,$stdout);
+    foreach ($lines as $line)
+    {
+      $v=explode('=',$line);
+      if (trim($v[0])=='file number')
+      {
+        $this->tape['file number']=trim(str_replace("'","",$v[1]));
+      }      
+      
+      if (trim($v[0])=='block number')
+      {
+        $this->tape['block number']=trim(str_replace("'","",$v[1]));
+      }
+    }        
+    
+    logMsg("Found Tape with Serial: $serial and ID: {$this->tape['id']}");
+  }
+  
+  function WaitForTape()
+  { 
+    $i=0;
+    do 
+    {       
+      $res=my_shell_exec("mt-st -f {$this->config['tapedevice']} status",$stdout,$stderr);
+      if ($res<>0)
+      {      
+        logMsg("Tape in use...");
+        sleep(60);
+        $i++;
+        if ($c>900)
+        {
+          logMsg("Tape in use timeout. Aborting");
+          exit(2);
+        }
+      }
+    }
+    while ($res<>0);
+    
+    $c=0;
+    while (strpos($stdout,"DR_OPEN")!==FALSE)
+    {
+      logMsg("Waiting for  tape...");
+      sleep(60);
+      $c++;
+      if ($c>900)
+      {
+        logMsg("Waiting for tape timeout. Aborting");
+        exit(2);
+      }
+    }    
+    //Read Tape info                
+  }
+  
+  function isBackupHost($dir)
+  {
+    foreach ($this->hosts as $host)
+    {
+    
+      if (strpos($dir,$host)>0)
+      {
+        $this->current_host=$host;
+        return true;
+      }
+    }
+    return false;  
+  }
+  
+  function clearTape()
+  {
+    $sql = "DELETE FROM tars WHERE tape_id={$this->tape['id']}";
+    $this->db->exec($sql);       
+  }
+  
+  function tarAdditionalDirs()
+  {  
+    foreach ($this->config['additionalDirs'] as $label=>$dir)
+    {
+      $this->tar($dir,$label);    
+    }
+  }
+  
+  function checkTapeDone()
+  {
+    $sql = "SELECT label FROM tars WHERE tape_id={$this->tape['id']}";
+    
+    $hosts=$this->hosts;
+    
+    $res= $this->db->query($sql);
+    while ($row=$res->fetch())
+    {    
+      if (($key = array_search($row['label'], $hosts)) !== false) {
+        unset($hosts[$key]);
+      }              
+    }    
+    return count($hosts)==0;  
+  }
+  
+  function lock()
+  {
+    $key = ftok(__FILE__, 'T');
+    $this->semaphore = sem_get($key, 1);
+    if (sem_acquire($this->semaphore, 0) !== false) {
+      logMsg("Acquired lock");
+    }
+    else
+    {
+      throw new Exception('Lock failed.');
+    }
+  }
+  
+  function unlock()
+  {
+    sem_release($this->semaphore) ;
+  }
+  
+  function eject()
+  {
+    logMsg("Ejecting Tape");
+    exec("mt -f {$this->config['tapedevice']} eject");
+  }
 }
 
-doTapeBackup() {
-  echo "Doing tape backup $1 $2"
-  waitForTape
-  cd /
-  tar -cf - ${2:1} -V=$1 | buffer -o $TAPEDEVICE
+$tb=new TapeBackup();
+
+if ($tb->isBackupHost($argv[1]))
+{
+  $tb->lock();
+  $tb->WaitForTape();
+  $tb->readTapeInfo();
+
+  if ($tb->tape['file number']==0)
+  {
+    $tb->clearTape();  
+  }  
+  $tb->tar($argv[1],$tb->current_host);
+          
+  if ($tb->checkTapeDone())
+  {
+    $tb->tarAdditionalDirs();
+    $tb->eject();  
+  } 
+  $tb->unlock();
 }
-
-checkTapeFinished() {
-  BACKUPS=`mt-gnu -f $TAPEDEVICE status |grep "file number" | awk -F '=' '{print $2}'`
-  if [ "$HOSTCOUNT" -eq "$BACKUPS" ]
-  then
-    echo "Tape done"
-    afterFinishedHook
-    echo "Ejecting tape"
-    #mt -f $TAPEDEVICE eject
-  fi
-}
-
-HOSTCOUNT=0
-for host in $BACKUPHOSTS
-do
-  if echo "$1" | grep -q "$host"; then
-    doTapeBackup $host $1
-  fi
-  HOSTCOUNT=$((HOSTCOUNT+1))
-
-done
-
-checkTapeFinished
-
-echo "Tape backup done"
