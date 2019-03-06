@@ -6,7 +6,8 @@ Usage:
 
   1. Requires: php, mysql, mt-gnu, mt-st, tar, buffer
   2. urbackup user must be able to write to the tape device. (This was a bit tricky, it only worked, when a made tape the main group of user urbackup)
-  3. Set Parameters in the script. Tapedevice, MySQL and optional additional Directories to include in the backup
+  3. Create database an import tape_backup.sql
+  4. Set Parameters in the script. Tapedevice, MySQL and optional additional Directories to include in the backup
     
     $config['tapedevice']="/dev/nst0";
     $config['server']="localhost";
@@ -17,12 +18,13 @@ Usage:
     //Optional:
     $config['additionalDirs'][<label>]=<dir>;
 
-  4. The Urbackup user must be able to sudo tapeinfo. Add the following line with visudo:
+  5. The Urbackup user must be able to sudo tapeinfo. Add the following line with visudo:
   
     urbackup      ALL = NOPASSWD: /usr/sbin/tapeinfo
      
 
-  5. Copy the file to /var/urbackup
+  6. Copy the file to /var/urbackup
+  7. Add hosts to backup in the hosts table in the database.
   
  
 Only tested on Ubuntu 18.04 
