@@ -4,7 +4,7 @@ Writes all data from specified hosts to tape.
 
 Usage:
 
-  1. Requires: php, mysql, mt-gnu, mt-st, tar, buffer
+  1. Requires: php, mysql, mt-gnu, mt-st, tar, buffer, sg3-utils
   2. urbackup user must be able to write to the tape device. (This was a bit tricky, it only worked, when a made tape the main group of user urbackup)
   3. Create database an import tape_backup.sql
   4. Set Parameters in the script. Tapedevice, MySQL and optional additional Directories to include in the backup
