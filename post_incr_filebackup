@@ -46,7 +46,7 @@ class TapeBackup
     $this->config=$config;
        
     try {
-    $this->db = new PDO("mysql:host={$config['server']};dbname={$config['db']}", $config['username'], $config['password']);
+    $this->db = new PDO("mysql:host={$config['server']};dbname={$config['db']}", $config['username'], $config['password'],array(PDO::MYSQL_ATTR_LOCAL_INFILE => true));
     // set the PDO error mode to exception
     $this->db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);    
     }
@@ -86,21 +86,13 @@ class TapeBackup
       throw new Exception("Error $res Taring $cmd\n$stderr\n");    
     }
     
-    $stderr=file_get_contents($tmpfile); 
-    
-    $files=explode(PHP_EOL,$stderr);
-      
     $sql = "INSERT INTO tars (label, tape_id)
     VALUES ('$label',{$this->tape['id']})";
     $this->db->exec($sql);    
     $tar_id = $this->db->lastInsertId();
-      
-    foreach($files as $file)
-    {   
-      $sql = "INSERT INTO files (tar_id, file,changed,backuped)
-      VALUES ($tar_id, '{$file}', now(),now())";  
-      $this->db->exec($sql);
-    }  
+    
+    $sql = "LOAD DATA LOCAL INFILE '$tmpfile'  INTO TABLE files (file, @var1) SET tar_id=$tar_id,changed=now(),backuped=now()";         
+    $this->db->exec($sql);        
   }
   
   function getTape($serial)
@@ -123,19 +115,10 @@ class TapeBackup
   }
   
   function readTapeInfo()
-  {                
-    my_shell_exec("sudo tapeinfo -f {$this->config['tapedevice']}",$stdout,$stderr);
-    $lines=explode(PHP_EOL,$stdout);
-    foreach ($lines as $line)
-    {
-      $v=explode(':',$line);
-      if ($v[0]=='SerialNumber')
-      {
-        $serial=trim(str_replace("'","",$v[1]));
-      }      
-    }
+  {
+    $serial=exec("sudo sg_rmsn -r {$this->config['tapedevice']}");    
     $this->getTape($serial);
-        
+            
     my_shell_exec("mt-gnu -f {$this->config['tapedevice']} status",$stdout,$stderr);
     $lines=explode(PHP_EOL,$stdout);
     foreach ($lines as $line)
