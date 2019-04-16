@@ -1,5 +1,4 @@
 #!/usr/bin/php
-
 <?php
 
 $config['tapedevice']="/dev/nst0";
@@ -13,7 +12,7 @@ $config['additionalDirs'][<label>]=<dir>;
 
 function logMsg($msg)
 {
-  echo $msg;
+  echo date("H:i:s ").$msg;
   echo "\n";
 }
 
@@ -45,17 +44,7 @@ class TapeBackup
     global $config;
     $this->config=$config;
        
-    try {
-    $this->db = new PDO("mysql:host={$config['server']};dbname={$config['db']}", $config['username'], $config['password'],array(PDO::MYSQL_ATTR_LOCAL_INFILE => true));
-    // set the PDO error mode to exception
-    $this->db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);    
-    }
-    catch(PDOException $e)
-    {
-      logMsg("Connection failed: " . $e->getMessage());
-      exit(1);
-    }
-    
+    $this->connect();        
     $sql = "SELECT * FROM hosts";
     $res= $this->db->query($sql);
     while ($row=$res->fetch())
@@ -63,6 +52,28 @@ class TapeBackup
       $this->hosts[]=$row['host'];
     }
           
+  }
+  
+  function connect()
+  {
+    try {
+      $this->db = new PDO("mysql:host={$this->config['server']};dbname={$this->config['db']}", $this->config['username'], $this->config['password'],array(PDO::MYSQL_ATTR_LOCAL_INFILE => true));
+      // set the PDO error mode to exception
+      $this->db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+      $this->db->exec("SET SESSION interactive_timeout = 288000");             
+      $this->db->exec("SET SESSION wait_timeout = 288000");
+    }
+    catch(PDOException $e)
+    {
+      logMsg("Connection failed: " . $e->getMessage());
+      exit(1);
+    }
+
+  }
+  
+  function disconnect()
+  {
+    $this->db = null;
   }
   
   function tar($path,$label)
@@ -79,12 +90,16 @@ class TapeBackup
     
     $path=ltrim($path,'/');                                                                           
     $cmd="bash -c 'tar -C / -cvf - $path -V=$label 2>$tmpfile | buffer -o {$this->config['tapedevice']}; exit \$((PIPESTATUS[0]+PIPESTATUS[1]))' ";
+    
+    $this->disconnect();  //Disconnect before tar because of disconnect timeout
       
     $res=my_shell_exec($cmd,$stdout,$stderr);           
     if ($res!=0)
     {
-      throw new Exception("Error $res Taring $cmd\n$stderr\n");    
+      throw new Exception("Error $res Taring $cmd\n$stderr\n$stdout\n");    
     }
+    
+    $this->connect();
     
     $sql = "INSERT INTO tars (label, tape_id)
     VALUES ('$label',{$this->tape['id']})";
@@ -116,7 +131,7 @@ class TapeBackup
   
   function readTapeInfo()
   {
-    $serial=exec("sudo sg_rmsn -r {$this->config['tapedevice']}");    
+    $serial=trim(exec("sudo sg_rmsn -r {$this->config['tapedevice']}"));    
     $this->getTape($serial);
             
     my_shell_exec("mt-gnu -f {$this->config['tapedevice']} status",$stdout,$stderr);
@@ -141,35 +156,40 @@ class TapeBackup
   function WaitForTape()
   { 
     $i=0;
-    do 
-    {       
-      $res=my_shell_exec("mt-st -f {$this->config['tapedevice']} status",$stdout,$stderr);
-      if ($res<>0)
-      {      
-        logMsg("Tape in use...");
-        sleep(60);
-        $i++;
-        if ($c>900)
-        {
-          logMsg("Tape in use timeout. Aborting");
-          exit(2);
+    $c=0;
+    do
+    {
+      do 
+      {       
+        $res=my_shell_exec("mt-st -f {$this->config['tapedevice']} status",$stdout,$stderr);
+        if ($res<>0)
+        {      
+          logMsg("Tape in use...");
+          sleep(60);
+          $i++;
+          if ($i>60)
+          {
+            logMsg("Tape in use timeout. Aborting");
+            exit(2);
+          }
         }
       }
-    }
-    while ($res<>0);
+      while ($res<>0);
     
-    $c=0;
-    while (strpos($stdout,"DR_OPEN")!==FALSE)
-    {
-      logMsg("Waiting for  tape...");
-      sleep(60);
-      $c++;
-      if ($c>900)
+      
+      if (strpos($stdout,"DR_OPEN")!==FALSE)
       {
-        logMsg("Waiting for tape timeout. Aborting");
-        exit(2);
-      }
-    }    
+        logMsg("Waiting for  tape...");
+        sleep(60);
+        $c++;
+        if ($c>60)
+        {
+          logMsg("Waiting for tape timeout. Aborting");
+          exit(2);
+        }
+      }    
+    }
+    while (strpos($stdout,"DR_OPEN")!==FALSE); 
     //Read Tape info                
   }
   
@@ -240,12 +260,27 @@ class TapeBackup
     logMsg("Ejecting Tape");
     exec("mt -f {$this->config['tapedevice']} eject");
   }
+  
+  function checkSchedule()
+  {
+    $sql="SELECT * FROM schedule WHERE day=".date('N');   
+    $res= $this->db->query($sql);
+    if ($row=$res->fetch())
+    {    
+      return true;    
+    }
+    return false;      
+  } 
 }
 
 $tb=new TapeBackup();
 
 if ($tb->isBackupHost($argv[1]))
 {
+  if (!$tb->checkSchedule())
+  {
+    exit;
+  }  
   $tb->lock();
   $tb->WaitForTape();
   $tb->readTapeInfo();
