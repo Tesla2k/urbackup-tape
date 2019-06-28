@@ -94,6 +94,7 @@ class TapeBackup
     
     $this->disconnect();  //Disconnect before tar because of disconnect timeout
       
+    $res=my_shell_exec($cmd,$stdout,$stderr);
     if ($res!=0)
     {
       throw new Exception("Error $res Taring $cmd\n$stderr\n$stdout\n");    
