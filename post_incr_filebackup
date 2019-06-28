@@ -79,6 +79,7 @@ class TapeBackup
   function tar($path,$label)
   {
     $tmpfile='/var/urbackup/tarfiles';
+    $tmpfile2='/var/urbackup/tarfiles2';
       
     logMsg("Taring $path with label $label");
     if (!is_numeric($this->tape['id'])) 
@@ -93,11 +94,15 @@ class TapeBackup
     
     $this->disconnect();  //Disconnect before tar because of disconnect timeout
       
-    $res=my_shell_exec($cmd,$stdout,$stderr);           
     if ($res!=0)
     {
       throw new Exception("Error $res Taring $cmd\n$stderr\n$stdout\n");    
     }
+    
+    unlink($tmpfile2);
+    
+    $cmd='grep -v "/.hashes/root" '.$tmpfile.' | cut -d/ -f4- > '.$tmpfile;
+    exec($cmd);
     
     $this->connect();
     
@@ -106,7 +111,7 @@ class TapeBackup
     $this->db->exec($sql);    
     $tar_id = $this->db->lastInsertId();
     
-    $sql = "LOAD DATA LOCAL INFILE '$tmpfile'  INTO TABLE files (file, @var1) SET tar_id=$tar_id,changed=now(),backuped=now()";         
+    $sql = "LOAD DATA LOCAL INFILE '$tmpfile2'  INTO TABLE files (file, @var1) SET tar_id=$tar_id,changed=now(),backuped=now()";         
     $this->db->exec($sql);        
   }
   
@@ -116,6 +121,8 @@ class TapeBackup
     $res= $this->db->query($sql);
     if ($row=$res->fetch())
     {
+      $sql="UPDATE tapes SET last_seen=now() WHERE SerialNumber = '$serial'";
+      $this->db->query($sql);      
       $this->tape=$row;
     }
     else
