@@ -78,10 +78,11 @@ class TapeBackup
   
   function tar($path,$label)
   {
+    logMsg("Taring $path with label $label");
+    
     $tmpfile='/var/urbackup/tarfiles';
     $tmpfile2='/var/urbackup/tarfiles2';
       
-    logMsg("Taring $path with label $label");
     if (!is_numeric($this->tape['id'])) 
     {
        throw new Exception('Keine Tape Id.'); 
@@ -93,18 +94,19 @@ class TapeBackup
     $cmd="bash -c 'tar -C / -cvf - $path -V=$label 2>$tmpfile | buffer -o {$this->config['tapedevice']}; exit \$((PIPESTATUS[0]+PIPESTATUS[1]))' ";
     
     $this->disconnect();  //Disconnect before tar because of disconnect timeout
-      
     $res=my_shell_exec($cmd,$stdout,$stderr);
     if ($res!=0)
     {
       throw new Exception("Error $res Taring $cmd\n$stderr\n$stdout\n");    
     }
     
+    if (file_exists($tmpfile2))
+    {
     unlink($tmpfile2);
+    }
     
-    $cmd='grep -v "/.hashes/root" '.$tmpfile.' | cut -d/ -f4- > '.$tmpfile;
+    $cmd='grep -v "/.hashes/" '.$tmpfile.' | cut -d/ -f4- > '.$tmpfile2;
     exec($cmd);
-    
     $this->connect();
     
     $sql = "INSERT INTO tars (label, tape_id)
@@ -217,6 +219,7 @@ class TapeBackup
   
   function clearTape()
   {
+    logMsg("Clear Tape in Database");    
     $sql = "DELETE FROM tars WHERE tape_id={$this->tape['id']}";
     $this->db->exec($sql);       
   }
