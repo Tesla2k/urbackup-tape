@@ -16,6 +16,28 @@ function logMsg($msg)
   echo "\n";
 }
 
+/**
+ * Check if a table exists in the current database.
+ *
+ * @param PDO $pdo PDO instance connected to a database.
+ * @param string $table Table to search for.
+ * @return bool TRUE if table exists, FALSE if no table found.
+ */
+function tableExists($pdo, $table) {
+
+    // Try a select statement against the table
+    // Run it in try/catch in case PDO is in ERRMODE_EXCEPTION.
+    try {
+        $result = $pdo->query("SELECT 1 FROM $table LIMIT 1");
+    } catch (Exception $e) {
+        // We got an exception == table not found
+        return FALSE;
+    }
+
+    // Result is either boolean FALSE (no table found) or PDOStatement Object (table found)
+    return $result !== FALSE;
+}
+
 function my_shell_exec($cmd, &$stdout=null, &$stderr=null) 
 {
       $proc = proc_open($cmd,[
@@ -82,7 +104,7 @@ class TapeBackup
     
     $tmpfile='/var/urbackup/tarfiles';
     $tmpfile2='/var/urbackup/tarfiles2';
-      
+          
     if (!is_numeric($this->tape['id'])) 
     {
        throw new Exception('Keine Tape Id.'); 
@@ -99,22 +121,53 @@ class TapeBackup
     {
       throw new Exception("Error $res Taring $cmd\n$stderr\n$stdout\n");    
     }
-    
+  
     if (file_exists($tmpfile2))
     {
-    unlink($tmpfile2);
+      unlink($tmpfile2);
     }
     
     $cmd='grep -v "/.hashes/" '.$tmpfile.' | cut -d/ -f4- > '.$tmpfile2;
     exec($cmd);
+        
+    logMsg("Writing to database");
+    
     $this->connect();
+    
+    $fileTable="files_".date("Ym");
+              
+    if (!tableExists($this->db,$fileTable))
+    {
+    
+      //Create Table
+      logMsg("Create database $fileTable");      
+      
+      $this->db->exec("CREATE TABLE IF NOT EXISTS `$fileTable` (
+        `id` int NOT NULL AUTO_INCREMENT,
+        `tar_id` int NOT NULL,
+        `file` text NOT NULL,
+        `changed` timestamp NULL DEFAULT NULL,
+        `backuped` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (`id`),
+        KEY `tar_id` (`tar_id`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=latin1 ROW_FORMAT=COMPRESSED;");
+
+      $this->db->exec("ALTER TABLE `$fileTable` ADD FULLTEXT KEY `file` (`file`);");
+
+
+      $this->db->exec("ALTER TABLE `$fileTable`
+        ADD CONSTRAINT `{$fileTable}_ibfk_1` FOREIGN KEY (`tar_id`) REFERENCES `tars` (`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+      COMMIT;");
+      
+    }
+
     
     $sql = "INSERT INTO tars (label, tape_id)
     VALUES ('$label',{$this->tape['id']})";
     $this->db->exec($sql);    
     $tar_id = $this->db->lastInsertId();
     
-    $sql = "LOAD DATA LOCAL INFILE '$tmpfile2'  INTO TABLE files (file, @var1) SET tar_id=$tar_id,changed=now(),backuped=now()";         
+    $sql = "LOAD DATA LOCAL INFILE '$tmpfile2'  INTO TABLE $fileTable (file, @var1) SET tar_id=$tar_id,changed=now(),backuped=now()";         
     $this->db->exec($sql);        
   }
   
